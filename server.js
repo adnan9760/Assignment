@@ -2,10 +2,30 @@ const http = require("http");
 const https = require("https");
 
 function cleanTitle(title) {
-  return title
-    .replace(/<[^>]*>/g, "") 
-    .replace(/&[^;]+;/g, "") 
-    .trim();
+  let cleaned = title;
+  while (cleaned.includes("<")) {
+    const start = cleaned.indexOf("<");
+    const end = cleaned.indexOf(">", start);
+    if (end === -1) break;
+    cleaned = cleaned.slice(0, start) + cleaned.slice(end + 1);
+  }
+  
+  const entities = {
+    "&amp;": "&",
+    "&lt;": "<",
+    "&gt;": ">",
+    "&quot;": '"',
+    "&#39;": "'",
+    "&nbsp;": " "
+  };
+  
+  for (const [entity, replacement] of Object.entries(entities)) {
+    while (cleaned.includes(entity)) {
+      cleaned = cleaned.replace(entity, replacement);
+    }
+  }
+  
+  return cleaned.trim();
 }
 
 function isValidLink(link) {
@@ -13,27 +33,61 @@ function isValidLink(link) {
 }
 
 function extractStories(html) {
-  const regex = /<a[^>]+href="(https:\/\/time\.com\/\d+[^"]+)"[^>]*>(.*?)<\/a>/g;
   const stories = [];
-  let match;
-
-  while ((match = regex.exec(html)) !== null) {
-    const link = match[1];
-    const title = cleanTitle(match[2]);
-
-    if (title && isValidLink(link)) {
+  let position = 0;
+  
+  while (stories.length < 6 && position < html.length) {
+    const aTagStart = html.indexOf("<a", position);
+    if (aTagStart === -1) break;
+    
+    const aTagEnd = html.indexOf(">", aTagStart);
+    if (aTagEnd === -1) break;
+    
+    const aTag = html.slice(aTagStart, aTagEnd + 1);
+    
+    const hrefStart = aTag.indexOf('href="');
+    if (hrefStart === -1) {
+      position = aTagEnd + 1;
+      continue;
+    }
+    
+    const linkStart = hrefStart + 6; 
+    const linkEnd = aTag.indexOf('"', linkStart);
+    if (linkEnd === -1) {
+      position = aTagEnd + 1;
+      continue;
+    }
+    
+    const link = aTag.slice(linkStart, linkEnd);
+    
+    if (!isValidLink(link)) {
+      position = aTagEnd + 1;
+      continue;
+    }
+    
+    const closingTagStart = html.indexOf("</a>", aTagEnd);
+    if (closingTagStart === -1) {
+      position = aTagEnd + 1;
+      continue;
+    }
+    
+    const textContent = html.slice(aTagEnd + 1, closingTagStart);
+    const title = cleanTitle(textContent);
+    
+    if (title) {
       stories.push({ title, link });
     }
-    if (stories.length >= 6) break; 
+    
+    position = closingTagStart + 4; // Move past </a>
   }
-
+  
   return stories;
 }
 
 function fetchTimeStories(callback) {
   https.get("https://time.com", (res) => {
     let data = "";
-
+    
     res.on("data", (chunk) => (data += chunk));
     res.on("end", () => callback(extractStories(data)));
   }).on("error", (err) => {
